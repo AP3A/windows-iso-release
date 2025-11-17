@@ -27,6 +27,12 @@ jobs:
         run: .\uup_download_windows.cmd
 
 
+      - name: Upload ISO as private artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-iso
+          path: "*.iso"
+
       - name: Generate build metadata
         id: metadata
         shell: pwsh

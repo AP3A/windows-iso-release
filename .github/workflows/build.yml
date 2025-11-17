@@ -1,0 +1,90 @@
+name: Build Windows ISO and Upload to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      archive_identifier:
+        description: 'Nama item unik (tidak wajib untuk rilis, tapi tetap dicatat)'
+        required: true
+        default: 'windows-11-generic-build'
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    # --- FIX UTAMA: IZIN UNTUK MEMBUAT RILIS ---
+    permissions:
+      contents: write
+    # -------------------------------------------
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Langkah Download
+      - name: Download UUP files
+        shell: cmd
+        run: .\uup_download_windows.cmd
+
+      # 2. Langkah Convert (Penting: dipisah agar ISO terbentuk sempurna)
+      - name: Convert to ISO
+        shell: cmd
+        run: .\uup_convert_windows.cmd
+
+      - name: Upload ISO as private artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-iso
+          path: "*.iso"
+
+      - name: Generate build metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          # Mencari file ISO
+          $iso = Get-ChildItem -Filter *.iso | Select-Object -First 1
+          if (-not $iso) {
+            Write-Error "File ISO tidak ditemukan! Pastikan langkah convert berhasil."
+            exit 1
+          }
+          
+          # Menghitung Hash dan Tanggal
+          $hash = Get-FileHash $iso.FullName -Algorithm SHA256
+          $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          
+          # Membuat Tag Unik (misal: build-12345-1)
+          $tagName = "build-${{ github.run_id }}-${{ github.run_number }}"
+          
+          # Simpan output untuk langkah upload
+          echo "iso_name=$($iso.Name)" >> $env:GITHUB_OUTPUT
+          echo "release_tag=$tagName" >> $env:GITHUB_OUTPUT
+
+          # Buat isi file build-info.txt
+          $content = @"
+          File Name: $($iso.Name)
+          SHA256: $($hash.Hash)
+          Build Date (UTC): $buildDate
+          Release Tag: $tagName
+          Repository: $env:GITHUB_REPOSITORY
+          Run ID: $env:GITHUB_RUN_ID
+          Identifier: ${{ github.event.inputs.archive_identifier }}
+          "@
+          $content | Out-File -Encoding utf8 build-info.txt
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Nama Rilis di GitHub
+          name: "Windows Build ${{ github.run_number }}"
+          # Tag yang dibuat tadi
+          tag_name: ${{ steps.metadata.outputs.release_tag }}
+          # Deskripsi rilis diambil dari build-info.txt
+          body_path: "build-info.txt"
+          # Tandai sebagai Pre-release
+          prerelease: true
+          # File yang diupload: ISO dan info text
+          files: |
+            ${{ steps.metadata.outputs.iso_name }}
+            build-info.txt

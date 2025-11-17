@@ -26,16 +26,6 @@ jobs:
         shell: cmd
         run: .\uup_download_windows.cmd
 
-      # 2. Langkah Convert (Penting: dipisah agar ISO terbentuk sempurna)
-      - name: Convert to ISO
-        shell: cmd
-        run: .\uup_convert_windows.cmd
-
-      - name: Upload ISO as private artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-iso
-          path: "*.iso"
 
       - name: Generate build metadata
         id: metadata

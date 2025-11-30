@@ -1,10 +1,10 @@
-name: Build Windows ISO and Upload to Release
+name: Build Windows ISO and Upload to Release & Archive.org
 
 on:
   workflow_dispatch:
     inputs:
       archive_identifier:
-        description: 'Nama item unik (tidak wajib untuk rilis, tapi tetap dicatat)'
+        description: 'Nama item unik di Archive.org (contoh: windows-11-build-123)'
         required: true
         default: 'windows-11-generic-build'
 
@@ -12,20 +12,19 @@ jobs:
   build:
     runs-on: windows-2022
 
-    # --- FIX UTAMA: IZIN UNTUK MEMBUAT RILIS ---
     permissions:
       contents: write
-    # -------------------------------------------
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. Langkah Download
+      # -------------------------------------------
+      # 1. Download ISO
+      # -------------------------------------------
       - name: Download UUP files
         shell: cmd
         run: .\uup_download_windows.cmd
-
 
       - name: Upload ISO as private artifact
         uses: actions/upload-artifact@v4
@@ -33,29 +32,24 @@ jobs:
           name: windows-iso
           path: "*.iso"
 
+      # -------------------------------------------
+      # 2. Generate metadata
+      # -------------------------------------------
       - name: Generate build metadata
         id: metadata
         shell: pwsh
         run: |
-          # Mencari file ISO
           $iso = Get-ChildItem -Filter *.iso | Select-Object -First 1
-          if (-not $iso) {
-            Write-Error "File ISO tidak ditemukan! Pastikan langkah convert berhasil."
-            exit 1
-          }
-          
-          # Menghitung Hash dan Tanggal
+          if (-not $iso) { Write-Error "File ISO tidak ditemukan!"; exit 1 }
+
           $hash = Get-FileHash $iso.FullName -Algorithm SHA256
           $buildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          
-          # Membuat Tag Unik (misal: build-12345-1)
           $tagName = "build-${{ github.run_id }}-${{ github.run_number }}"
-          
-          # Simpan output untuk langkah upload
+
           echo "iso_name=$($iso.Name)" >> $env:GITHUB_OUTPUT
+          echo "iso_path=$($iso.FullName)" >> $env:GITHUB_OUTPUT
           echo "release_tag=$tagName" >> $env:GITHUB_OUTPUT
 
-          # Buat isi file build-info.txt
           $content = @"
           File Name: $($iso.Name)
           SHA256: $($hash.Hash)
@@ -65,22 +59,65 @@ jobs:
           Run ID: $env:GITHUB_RUN_ID
           Identifier: ${{ github.event.inputs.archive_identifier }}
           "@
+
           $content | Out-File -Encoding utf8 build-info.txt
 
+      # -------------------------------------------
+      # 3. Upload ke GitHub Release
+      # -------------------------------------------
       - name: Create GitHub Release and Upload Assets
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Nama Rilis di GitHub
           name: "Windows Build ${{ github.run_number }}"
-          # Tag yang dibuat tadi
           tag_name: ${{ steps.metadata.outputs.release_tag }}
-          # Deskripsi rilis diambil dari build-info.txt
           body_path: "build-info.txt"
-          # Tandai sebagai Pre-release
           prerelease: true
-          # File yang diupload: ISO dan info text
           files: |
             ${{ steps.metadata.outputs.iso_name }}
             build-info.txt
+
+      # -------------------------------------------
+      # 4. Upload ke ARCHIVE.ORG
+      # -------------------------------------------
+      - name: Install Python & IA CLI
+        run: |
+          python -m pip install --upgrade pip
+          pip install ia
+
+      - name: Upload ISO to Archive.org
+        env:
+          IA_ACCESS_KEY: ${{ secrets.IA_ACCESS_KEY }}
+          IA_SECRET_KEY: ${{ secrets.IA_SECRET_KEY }}
+          IDENTIFIER: ${{ github.event.inputs.archive_identifier }}
+        run: |
+          ia configure --access-key "%IA_ACCESS_KEY%" --secret-key "%IA_SECRET_KEY%"
+          
+          REM file utama ISO
+          set FILE_TO_UPLOAD=${{ steps.metadata.outputs.iso_path }}
+
+          REM upload file ISO + build-info.txt
+          ia upload "%IDENTIFIER%" "%FILE_TO_UPLOAD%" build-info.txt --metadata="mediatype:data" --metadata="creator:Github Actions" --metadata="description:Automated Windows ISO Build"
+
+      # -------------------------------------------
+      # 5. Add Archive.org Link to GitHub Release
+      # -------------------------------------------
+      - name: Add Archive.org Link to GitHub Release
+        run: |
+          # URL ke Archive.org menggunakan identifier dari input
+          $archive_url = "https://archive.org/details/${{ github.event.inputs.archive_identifier }}"
+
+          # Create release notes with Archive URL
+          echo "Updating release with Archive.org link: $archive_url"
+          
+          # Menggunakan GitHub API untuk update release dengan Archive URL
+          curl -X PATCH \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d @- \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${{ steps.metadata.outputs.release_tag }}" <<EOF
+          {
+            "body": "Automated Windows ISO Build\n\n[Download from Archive.org]($archive_url)"
+          }
+          EOF

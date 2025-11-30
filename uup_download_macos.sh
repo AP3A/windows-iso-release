@@ -1,5 +1,5 @@
 #!/bin/bash
-#Generated on 2025-11-29 16:43:35 GMT
+#Generated on 2025-11-30 00:03:58 GMT
 
 # Proxy configuration
 # If you need to configure a proxy to be able to connect to the internet,
@@ -71,5 +71,5 @@ fi
 echo ""
 if [ -e ./files/convert.sh ]; then
   chmod +x ./files/convert.sh
-  ./files/convert.sh wim "$destDir" 1
+  ./files/convert.sh wim "$destDir" 0
 fi
